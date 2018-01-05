@@ -36,4 +36,29 @@ There are many situations in which the application is using some kind of encodin
 
 For instance, there might be payload like: `SGVsbG9Xb3JsZA%3d%3d` that is a result of `URLEncode(Base64('HelloWorld'))`. In order to get to the inner string, the fuzzer would have to peel of those encodings - mutate the value, and re-apply encodings in reversed order.
 
-For this purpose, the extension will use following [gist](https://gist.github.com/mgeeky/1052681318a8164b112edfcdcb30798f)
+For this purpose, the extension will use following [gist](https://gist.github.com/mgeeky/1052681318a8164b112edfcdcb30798f).
+
+
+## Installation and Usage
+
+### Installation
+In order to install that extension - download the `*.py` file, then in _Extender->Extension_ select _Add_. Then specify that extension is of type _Python_ (you will have to install [_Jython_](http://www.jython.org/downloads.html) first ).
+
+Then, in your command line - install Python requistities:
+
+On windows:
+```
+cmd> pip install jwt
+cmd> pip install anytree
+```
+
+On linux:
+```
+$ sudo pip install jwt ; sudo pip install anytree
+```
+(in case _pip_ fails: try looking for packages like _python2-pyjwt_ ).
+
+
+### Usage
+
+This is a Payload Generation, so it comes into play in _Intruder_->_Payloads_->_Payload Type_->_Extension-generated_->_Selected generator_->**_Context-Aware Fuzzer_** . Having it specified as your payload-generator, you can start the attack and watch the payloads being mutated.
