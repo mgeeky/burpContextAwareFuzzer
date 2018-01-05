@@ -36,4 +36,4 @@ There are many situations in which the application is using some kind of encodin
 
 For instance, there might be payload like: `SGVsbG9Xb3JsZA%3d%3d` that is a result of `URLEncode(Base64('HelloWorld'))`. In order to get to the inner string, the fuzzer would have to peel of those encodings - mutate the value, and re-apply encodings in reversed order.
 
-For this purpose, the extension will use following (gist)[https://gist.github.com/mgeeky/1052681318a8164b112edfcdcb30798f]
+For this purpose, the extension will use following [gist](https://gist.github.com/mgeeky/1052681318a8164b112edfcdcb30798f)
