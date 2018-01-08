@@ -44,17 +44,23 @@ For this purpose, the extension will use following [gist](https://gist.github.co
 ### Installation
 In order to install that extension - download the `*.py` file, then in _Extender->Extension_ select _Add_. Then specify that extension is of type _Python_ (you will have to install [_Jython_](http://www.jython.org/downloads.html) first ).
 
-Then, in your command line - install Python requistities:
+Then, in your command line - install Jython requistities:
 
 On windows:
 ```
-cmd> pip install jwt
-cmd> pip install anytree
+cmd> java -cp jython.jar org.python.util.jython -m ensurepip
+cmd> java -cp jython.jar org.python.util.jython
+Jython 2.7.1b3 (default:df42d5d6be04, Feb 3 2016, 03:22:46)
+[Java HotSpot(TM) 64-Bit Server VM (Oracle Corporation)] on  java1.8.0_144
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import pip
+>>> pip.main(['install', 'anytree'])
+>>> pip.main(['install', 'pyjwt'])
 ```
 
 On linux:
 ```
-$ sudo pip install jwt ; sudo pip install anytree
+TODO.
 ```
 (in case _pip_ fails: try looking for packages like _python2-pyjwt_ ).
 
