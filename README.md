@@ -56,6 +56,8 @@ Type "help", "copyright", "credits" or "license" for more information.
 >>> import pip
 >>> pip.main(['install', 'anytree'])
 >>> pip.main(['install', 'pyjwt'])
+>>> pip.main(['install', 'lxml'])
+>>> pip.main(['install', 'flatten_json'])
 ```
 
 On linux:
