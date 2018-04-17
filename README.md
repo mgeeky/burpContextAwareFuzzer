@@ -21,7 +21,7 @@ The extension has to detect with what kind of payload is it dealing with at the 
 - Some serialized stream
 - XML
 
-Having detected type of payload, it will have to leverage that information to generate proper (according to the context) edge-case values, like integer overflows, path-traversal mutations and so on.
+Having detected type of payload, it will have to leverage that information to generate proper (according to the context) edge-case values, like integer overflows, path-traversal mutations and so on. Also, having JSON or XML object - it will iterate over it recursively, generaring along the way fuzz values for every parameter or attribute met. **This makes the extension a powerful companion while dealing with severly encoded JSON/XML payloads**, making it possible to fuzz them without a hassle.
 
 ### Encoding detection and re-encoding
 
