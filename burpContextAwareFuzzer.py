@@ -1175,7 +1175,7 @@ class XMLTypeFuzzer(BaseFuzzer):
             elemText = elem.text
             path = path.replace('./', './/')
 
-            if not elemText.strip(): continue
+            if not elemText or not elemText.strip(): continue
             num += 1
             if num % fuzzEveryN != 0: continue
 
