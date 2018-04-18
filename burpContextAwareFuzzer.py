@@ -1044,7 +1044,7 @@ class JSONTypeFuzzer(BaseFuzzer):
         try:
             json.loads(data)
             return True
-        except ValueError:
+        except:
             return False
 
     @staticmethod
@@ -1120,7 +1120,7 @@ class XMLTypeFuzzer(BaseFuzzer):
         try:
             root = ET.fromstring(data.strip())
             return True
-        except ValueError:
+        except:
             return False
 
     def iterateNodesAndAttribs(self, root):
