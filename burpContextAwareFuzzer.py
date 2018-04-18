@@ -34,6 +34,12 @@
 #   >>> pipmain(['install', 'pyjwt'])
 #   -----------------------------------------------------------------------------
 #
+# KNOWN BUGS / LIMITATIONS:
+#   At the moment XML payloads fuzzing has been disabled since there is a problem with Jython's ElementTree implementation,
+#   that is implemented in Xerces SAXParser. Refer to:
+#       https://support.portswigger.net/customer/portal/questions/16996471-sax2-driver-class-org-apache-xercer-parses-saxparser-not-found
+#   If you think problem is solved, refer to 'ContextAwareFuzzer.__init__()' and uncomment 'XMLTypeFuzzer' in 'self.typeHandlers'.
+#
 # Notes:
 #   This program uses code coming from 'flatten_json' package, that was taken out from that 
 #   package to avoid hassle of installing yet another package.
@@ -1026,6 +1032,7 @@ class JSONTypeFuzzer(BaseFuzzer):
     def __init__(self, intensity):
         self.mutations = []
         self.intensity = intensity
+        print('Support for: XML payloads fuzzing')
 
     def name(self):
         return 'JSON'
@@ -1101,6 +1108,7 @@ class XMLTypeFuzzer(BaseFuzzer):
     def __init__(self, intensity):
         self.mutations = []
         self.intensity = intensity
+        print('Support for: XML payloads fuzzing')
 
     def name(self):
         return 'XML'
@@ -1321,9 +1329,9 @@ class ContextAwareFuzzer(IIntruderPayloadGenerator):
         # BUG: TODO:
         print('[!] XMLTypeFuzzer not available due to Jython\'s problems with SAXParser:')
         print('\t"Caused by: java.lang.ClassNotFoundException: org.apache.xerces.parsers.SAXParser"')
-        print("[!] If you think problem is solved, refer to 'ContextAwareFuzzer.__init__' and uncomment 'XMLTypeFuzzer' in 'self.typeHandlers'.")
+        print("[!] If you think problem is solved, refer to 'ContextAwareFuzzer.__init__()' and uncomment 'XMLTypeFuzzer' in 'self.typeHandlers'.")
         print('')
-        
+
         self.typeHandlers = (
             JSONTypeFuzzer(self.intensity),            
             #XMLTypeFuzzer(self.intensity),
