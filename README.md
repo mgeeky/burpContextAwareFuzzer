@@ -49,20 +49,24 @@ Then, in your command line - install Jython requistities:
 On windows:
 ```
 cmd> java -cp jython.jar org.python.util.jython -m ensurepip
+cmd> java -cp jython.jar org.python.util.jython -m ensurepip --upgrade
 cmd> java -cp jython.jar org.python.util.jython
 Jython 2.7.1b3 (default:df42d5d6be04, Feb 3 2016, 03:22:46)
 [Java HotSpot(TM) 64-Bit Server VM (Oracle Corporation)] on  java1.8.0_144
 Type "help", "copyright", "credits" or "license" for more information.
->>> import pip
->>> pip.main(['install', 'anytree'])
->>> pip.main(['install', 'pyjwt'])
->>> pip.main(['install', 'lxml'])
->>> pip.main(['install', 'flatten_json'])
+>>> try:
+...     from pip import main as pipmain
+... except:
+...     from pip._internal import main as pipmain
+...
+>>> pipmain(['install', '--upgrade', 'pip'])
+>>> pipmain(['install', 'anytree'])
+>>> pipmain(['install', 'pyjwt'])
 ```
 
 On linux:
 ```
-TODO.
+Try the same as for Windows.
 ```
 (in case _pip_ fails: try looking for packages like _python2-pyjwt_ ).
 
