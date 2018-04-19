@@ -10,6 +10,17 @@
 # then apply some modifications / fuzzes and afterwards encode the generated value according 
 # to previously detected encoding scheme. 
 #
+# There are 5 different level of fuzzing intensity implemented, each of them differs in number
+# of test-cases to use per one parameter. The figures are following:
+#   - Minimal: +/- 50 requests/parameter
+#   - Low: +/- 100-130 r/p
+#   - Medium: +/- 150-240 r/p
+#   - High: +/- 180-440 r/p
+#   - Extreme: +/- 260-750 r/p
+#
+# Those figures scale up when the fuzzer is being given with for instance JSON or XML object,
+# having N attributes and nodes.
+#
 # Requirements for Jython (to be installed in Jython's environment):
 #   - Jython 2.7
 #   - anytree
