@@ -8,7 +8,9 @@ The project is just starting, so there is nothing working at the moment.
 
 ![diagram](diagram.png)
 
-XML Fuzzing example:
+
+*Oh, by the way - this is how XML Fuzzing could look like:*
+
 ![fuzzing](fuzzing.gif)
 
 ## Features
