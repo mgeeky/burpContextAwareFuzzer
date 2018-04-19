@@ -4,6 +4,13 @@ BurpSuite's payload-generation extension aiming at applying fuzzed test-cases de
 
 The project is just starting, so there is nothing working at the moment.
 
+## How does it work?
+
+![diagram](diagram.png)
+
+XML Fuzzing example:
+![fuzzing](fuzzing.gif)
+
 ## Features
 
 This extension is an answer to a generic problem while using BurpSuite's _Intruder_ tool: 
