@@ -6,7 +6,7 @@ The project is just starting, so there are might be many issues, glitches and ar
 
 ## How does it work?
 
-![diagram](diagram.png)
+![diagram](diagram.jpg)
 
 
 *Oh, by the way - this is how XML Fuzzing could look like:*
