@@ -102,7 +102,7 @@ Those figures scale up when the fuzzer is being given with for instance JSON or 
 1) At the moment XML payloads fuzzing has been disabled since there is a problem with Jython's ElementTree implementation, that is implemented in Xerces SAXParser. Refer to:
 [sax2-driver-class-org-apache-xercer-parses-saxparser-not-found](https://support.portswigger.net/customer/portal/questions/16996471-sax2-driver-class-org-apache-xercer-parses-saxparser-not-found)
 
-If you think the problem is solved, refer to 'ContextAwareFuzzer.__init__()' and uncomment 'XMLTypeFuzzer' in 'self.typeHandlers'.
+If you think the problem is solved, refer to `ContextAwareFuzzer.__init__()` and uncomment `XMLTypeFuzzer()` in `self.typeHandlers`.
 
 2) Hardcoded fuzz entries list are to be further optimized and tested since they are crucial to number of input test-cases to generate, and thus directly affect fuzzer's performance.
 
