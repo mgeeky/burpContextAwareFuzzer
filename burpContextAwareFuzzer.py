@@ -380,11 +380,14 @@ PATH_TRAVERSAL_FILES = {
 # RE-ENCODER'S IMPLEMENTATION
 #
 
-
 class ReEncoder:
 
     # Switch this to show some verbose informations about decoding process.
     DEBUG = False
+
+    PREFER_AUTO = 0     # Automatically determine final output format
+    PREFER_TEXT = 1     # Prefer text/printable final output format
+    PREFER_BINARY = 2   # Prefer binary final output format
 
     class Utils:
         @staticmethod
@@ -476,7 +479,10 @@ class ReEncoder:
         def check(self, data):
             try:
                 if base64.b64encode(base64.b64decode(data)) == data:
-                    return True
+                    m = re.match('^(?:[A-Za-z0-9+\/]{4})*(?:[A-Za-z0-9+\/]{2}==|[A-Za-z0-9+\/]{3}=|[A-Za-z0-9+\/]{4})$', data, re.I)
+                    if m: 
+                        return True
+                    return False
             except:
                 pass
             return False
@@ -494,7 +500,10 @@ class ReEncoder:
         def check(self, data):
             try:
                 if base64.urlsafe_b64encode(base64.urlsafe_b64decode(data)) == data:
-                    return True
+                    m = re.match('^(?:[A-Za-z0-9\-_]{4})*(?:[A-Za-z0-9\-_]{2}==|[A-Za-z0-9\-_]{3}=|[A-Za-z0-9\-_]{4})$', data, re.I)
+                    if m: 
+                        return True
+                    return False
             except:
                 pass
             return False
@@ -504,6 +513,25 @@ class ReEncoder:
 
         def decode(self, data):
             return base64.urlsafe_b64decode(data)
+
+    class JWTEncoder(Encoder):
+        secret = ''
+
+        def name(self):
+            return 'JWT'
+
+        def check(self, data):
+            try:
+                jwt.decode(data, verify = False)
+                return True
+            except jwt.exceptions.DecodeError:
+                return False
+            
+        def encode(self, data):
+            return jwt.encode(data, JWTEncoder.secret)
+
+        def decode(self, data):
+            return jwt.decode(data, verify = False)
 
     class ZlibEncoder(Encoder):
         def name(self):
@@ -541,6 +569,7 @@ class ReEncoder:
             ReEncoder.HexEncoder(),
             ReEncoder.Base64Encoder(),
             ReEncoder.Base64URLSafeEncoder(),
+            ReEncoder.JWTEncoder(),
             ReEncoder.ZlibEncoder(),
 
             # None must always be the last detector
@@ -548,6 +577,7 @@ class ReEncoder:
         )
         self.encodersMap = {}
         self.data = ''
+        self.preferredOutputFormat = ReEncoder.PREFER_AUTO
 
         for encoder in self.encoders:
             self.encodersMap[encoder.name()] = encoder
@@ -655,13 +685,37 @@ class ReEncoder:
         return ent
 
     def evaluateEncodingTree(self, root):
-        weights = {
-            'printableChars' : 10.0,
-            'highEntropy' : 4.0,
-            'length' : 1.0
-        }
+        (printableEncodings, printableCandidate) = self.evaluateEncodingTreePicker(root, False)
+        (binaryEncodings, binaryCandidate) = self.evaluateEncodingTreePicker(root, True)
 
-        candidates = self.formEncodingCandidates(root)
+        if self.preferredOutputFormat == ReEncoder.PREFER_TEXT:
+            ReEncoder.log('Returning text/printable output format as requested preferred one.')
+            return printableEncodings
+        elif self.preferredOutputFormat == ReEncoder.PREFER_BINARY:
+            ReEncoder.log('Returning binary output format as requested preferred one.')
+            return binaryEncodings
+        else:
+            ReEncoder.log('Trying to determine preferred output format...')
+
+        ReEncoder.log('\n---------------------------------------')
+        ReEncoder.log('[>] Winning printable encoding path scored: {} points.'.format(
+            printableCandidate[2]
+        ))
+        ReEncoder.log('[>] Winning binary encoding path scored: {} points.'.format(
+            binaryCandidate[2]
+        ))
+
+        if(printableCandidate[2] >= binaryCandidate[2]):
+            ReEncoder.log('\n[+] Choosing all-time winner: PRINTABLE output format.')
+            return printableEncodings
+
+        ReEncoder.log('\n[+] Choosing all-time winner: BINARY output format.')
+        ReEncoder.log('---------------------------------------\n')
+        return binaryEncodings
+
+    def evaluateEncodingTreePicker(self, root, preferBinary):
+        candidates = self._evaluateEncodingTreeWorker(root, preferBinary)
+
         maxCandidate = 0
 
         for i in range(len(candidates)):
@@ -670,38 +724,6 @@ class ReEncoder:
             name = candidate[0]
             decoded = candidate[1]
             points = float(candidate[2])
-
-            ReEncoder.log('[=] Evaluating candidate: {} (data: "{}")'.format(
-                name, decoded
-            ))
-
-            # Step 1: Adding points for printable percentage.
-            printables = sum([int(x in string.printable) for x in decoded])
-            printablePoints = weights['printableChars'] * (float(printables) / float(len(decoded)))
-            ReEncoder.log('\tAdding {} points for printable characters.'.format(printablePoints))
-            points += printablePoints
-
-            # Step 4: If encoder is Base64 and was previously None
-            #    - then length and entropy of previous values should be of slighly lower weights
-            if name.lower() == 'none' \
-                and len(candidates) > i+1 \
-                and candidates[i+1][0].lower().startswith('base64'):
-                entropyPoints = ReEncoder.entropy(decoded) * (weights['highEntropy'] * 0.75)
-                lengthPoints = float(len(decoded)) * (weights['length'] * 0.75)
-            else:
-                entropyPoints = ReEncoder.entropy(decoded) * weights['highEntropy']
-                lengthPoints = float(len(decoded)) * weights['length']
-
-            # Step 2: Add points for entropy
-            ReEncoder.log('\tAdding {} points for high entropy.'.format(entropyPoints))
-            points += entropyPoints
-
-            # Step 3: Add points for length
-            ReEncoder.log('\tAdding {} points for length.'.format(lengthPoints))
-            points += lengthPoints
-            
-            ReEncoder.log('\tScored in total: {} points.'.format(points))
-            candidates[i][2] = points
 
             if points > candidates[maxCandidate][2]:
                 maxCandidate = i
@@ -716,11 +738,87 @@ class ReEncoder:
         ReEncoder.log('[?] Other equally good candidate paths:\n' + str(winningPaths))
         winningPath = winningPaths[0]
 
-        ReEncoder.log('[+] Winning decode path is:\n{}'.format(str(winningPath)))
+        preferred = 'printable'
+        if preferBinary:
+            preferred = 'binary'
+
+        ReEncoder.log('[+] Winning decode path for {} output is:\n{}'.format(
+            preferred,
+            str(winningPath))
+        )
 
         encodings = [x.name for x in winningPath.path if x != 'None']
+        return (encodings, winningCandidate)
 
-        return encodings
+    def _evaluateEncodingTreeWorker(self, root, preferBinary = False):
+        weights = {
+            'unreadableChars' : 0.0,
+            'printableChars' : 9.6,
+            'entropyScore' : 4.0,
+            'length' : 1.0,
+        }
+
+        if preferBinary:
+            weights['unreadableChars'] = 24.0
+            weights['printableChars'] = 0.0
+            weights['entropyScore'] = 2.666667
+
+        candidates = self.formEncodingCandidates(root)
+
+        for i in range(len(candidates)):
+            candidate = candidates[i]
+
+            name = candidate[0]
+            decoded = candidate[1]
+            points = float(candidate[2])
+            entropy = ReEncoder.entropy(decoded)
+            printables = sum([int(x in string.printable) for x in decoded])
+            nonprintables = len(decoded) - printables
+
+            ReEncoder.log('[=] Evaluating candidate: {} (entropy: {}, data: "{}")'.format(
+                name, entropy, decoded
+            ))
+
+            # Step 1: Adding points for printable percentage.
+            printablePoints = float(weights['printableChars']) * (float(printables) / float(len(decoded)))
+            nonPrintablePoints = float(weights['unreadableChars']) * (float(nonprintables) / float(len(decoded)))
+
+            # Step 2: If encoder is Base64 and was previously None
+            #    - then length and entropy of previous values should be of slighly lower weights
+            if name.lower() == 'none' \
+                and len(candidates) > i+1 \
+                and candidates[i+1][0].lower().startswith('base64'):
+                ReEncoder.log('\tAdding fine for being base64')
+                entropyPoints = entropy * (weights['entropyScore'] * 0.666666)
+                lengthPoints = float(len(decoded)) * (weights['length'] * 0.666666)
+            else:
+                entropyPoints = entropy * weights['entropyScore']
+                lengthPoints = float(len(decoded)) * weights['length']
+
+            if printables > nonprintables:
+                ReEncoder.log('More printable chars than binary ones.')
+                ReEncoder.log('\tAdding {} points for printable entropy.'.format(entropyPoints))
+
+                ReEncoder.log('\tAdding {} points for printable characters.'.format(printablePoints))
+                points += printablePoints
+            else:
+                ReEncoder.log('More binary chars than printable ones.')
+                ReEncoder.log('\tAdding {} points for binary entropy.'.format(entropyPoints))
+
+                ReEncoder.log('\tAdding {} points for binary characters.'.format(nonPrintablePoints))
+                points += nonPrintablePoints
+
+            points += entropyPoints
+
+            # Step 4: Add points for length
+            ReEncoder.log('\tAdding {} points for length.'.format(lengthPoints))
+            points += lengthPoints
+            
+            ReEncoder.log('\tScored in total: {} points.'.format(points))
+            candidates[i][2] = points
+
+        return candidates
+
 
     def getWinningDecodePath(self, root):
         return [x for x in self.evaluateEncodingTree(root) if x != 'None']
@@ -747,7 +845,16 @@ class ReEncoder:
         self.encodings = self.getWinningDecodePath(root)
         ReEncoder.log('[+] Selected encodings: {}'.format(str(self.encodings)))
 
-    def decode(self, data, encodings = []):
+    def decode(self, data, preferredOutputFormat = PREFER_AUTO, encodings = []):
+        self.preferredOutputFormat = preferredOutputFormat
+
+        if preferredOutputFormat != ReEncoder.PREFER_AUTO and \
+            preferredOutputFormat != ReEncoder.PREFER_TEXT and \
+            preferredOutputFormat != ReEncoder.PREFER_BINARY:
+            raise Exception('Unknown preferred output format specified in decode(): {}'.format(
+                preferredOutputFormat
+            ))
+
         if not encodings:
             self.process(data)
         else:
@@ -771,6 +878,7 @@ class ReEncoder:
             data = e
 
         return data
+
 
 class BaseFuzzer:
     def name(self):
@@ -1272,6 +1380,7 @@ class BurpExtender(IBurpExtender):
         ))
 
         generators = (
+            BitFlipperPayloadGenerator(),
             MinimalIntensityPayloadGenerator(),
             LowIntensityPayloadGenerator(),
             MediumIntensityPayloadGenerator(),
@@ -1283,6 +1392,13 @@ class BurpExtender(IBurpExtender):
             gen._callbacks = callbacks
             gen._helpers = self._helpers
             callbacks.registerIntruderPayloadGeneratorFactory(gen)
+
+class BitFlipperPayloadGenerator(IIntruderPayloadGeneratorFactory):
+    def getGeneratorName(self):
+        return 'Context-Aware Bit Flipper'
+
+    def createNewInstance(self, attack):
+        return ContextAwareBitFlipper(self, attack)
 
 class MinimalIntensityPayloadGenerator(IIntruderPayloadGeneratorFactory):
     def getGeneratorName(self):
@@ -1324,6 +1440,71 @@ class ExtremeIntensityPayloadGenerator(IIntruderPayloadGeneratorFactory):
 # =============================================
 # MAIN EXTENSION INTERFACE IMPLEMENTATION
 #
+
+class ContextAwareBitFlipper(IIntruderPayloadGenerator):
+    def __init__(self, extender, attack):
+        self._extender = extender
+        self._attack = attack
+        self._helpers = extender._helpers
+
+        self.mutations = []
+        self.payloadsToGenerate = 10
+        self.payloadsGenerated = 0
+
+    def hasMorePayloads(self):
+        return (self.payloadsGenerated < self.payloadsToGenerate)
+
+    def getNextPayload(self, currentPayload):
+        payload = self._helpers.bytesToString(currentPayload)
+
+        reencode = ReEncoder()
+        origPayload = payload
+        payload = reencode.decode(payload, ReEncoder.PREFER_BINARY)
+
+        if self.payloadsGenerated == 0:
+            print('[.] ReEncoder decoded value: "{}" into "{}" using chain: ({})'.format(
+                origPayload[:64], payload[:64], '->'.join(reencode.encodings)
+            ))
+
+        payload = self.mutatePayload(payload)
+        self.payloadsGenerated += 1
+
+        return reencode.encode(payload)
+
+    def reset(self):
+        self.payloadsGenerated = 0
+        self.mutations = []
+
+        print('[.] Reset.')
+
+    def prepareMutations(self, payload):
+        # Bit-flipping algorithm
+        flips = []
+
+        for idx in range(len(payload)):
+            c = payload[idx]
+            code = ord(c)
+            for i in range(8):
+                code = code ^ (1 << i)
+                tmp = payload[:idx] + chr(code) + payload[idx+1:]
+                flips.append(tmp)
+
+        return flips
+
+    def mutatePayload(self, payload):
+        if len(self.mutations) == 0:
+            #print('\n[.] Generating mutations for: "{}"'.format(payload[:100]))
+            
+            self.mutations = self.prepareMutations(payload)
+            self.payloadsToGenerate = len(self.mutations)
+            
+            print('[.] Generated {} mutations'.format(len(self.mutations)))
+
+        #print('[>] Returning mutation {}: "{}"'.format(
+        #   self.payloadsGenerated, self.mutations[self.payloadsGenerated]
+        #))
+
+        return self.mutations[self.payloadsGenerated]
 
 class ContextAwareFuzzer(IIntruderPayloadGenerator):
     def __init__(self, extender, attack, intensity):
